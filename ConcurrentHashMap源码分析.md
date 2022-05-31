@@ -5,15 +5,15 @@ ConcurrentHashMap是JUC包下提供的工具，相对于HashMap来说是线程�
 可以从两个方面考虑该问题，**性能**和**安全性**之间的平衡
 
 ### 3.1.7 1.8之间的区别
-1. 新增了方法：
-(1)compute
-(2)meger
-(3)computeIfAbsent
-(4)computeIfPresent 
+1. 新增了方法：  
+(1)compute  
+(2)meger  
+(3)computeIfAbsent  
+(4)computeIfPresent   
 
-2. 存储结构和实现
-(1)1.7 使用segment实现分段锁，锁的粒度较大1.8进行了优化
-(2)1.8引入了红黑树，解决链表长度过长导致查询效率低 时间复杂度由O(n) -> O(lngn)
+2. 存储结构和实现  
+(1)1.7 使用segment实现分段锁，锁的粒度较大1.8进行了优化  
+(2)1.8引入了红黑树，解决链表长度过长导致查询效率低 时间复杂度由O(n) -> O(lngn)  
 
 ### 3.put()源码分析
 ```java
@@ -131,6 +131,7 @@ put方法实际上是调用的putVal方法，
 
 ### 4.initTable()
 初始化table,因为可能存在多线程竞争的情况，但是这里并不是通过简单的加锁进行实现的
+
 ```java
 private final Node<K,V>[] initTable() {
 	Node<K,V>[] tab; int sc;
@@ -160,16 +161,18 @@ private final Node<K,V>[] initTable() {
 	return tab;
 }	
 ```
+
 1. sizeCtl参数的作用
 sizeCtl 默认为0，用来控制table的初始化和扩容操作,如果sizeCtl 为-1 则说明正在初始化
 
 sizeCtl的几种状态：
+
 ```shell
 sizeCtl >= 0              sizeCtl =-1          sizeCtl = 0.75* n
 表示初始化容量          				               存储扩容阈值             sizeCtl < -1 
 未初始化  -------------->  初始化中  --------------->  正常  ------到达扩容阈值需要进行扩容操作--------->  扩容中
-```                                                                扩容完毕sizeCtl回复正常
-
+                                                              扩容完毕sizeCtl回复正常
+```  
 SIZECTL中获取的 sizeCtl的地址偏移值，是在static中初始化的
 
 第一步：
@@ -266,6 +269,32 @@ private final void addCount(long x, int check) {
 }
 
 ```
+- 流程步骤总结
+addCount方法有两个入参，分别代表添加元数的个数和链表上元素的个数，该方法的主要作用有两个作用：**统计元素个数**以及**扩容操作**。
+1. 首先会判断counterCells的数组是否为空，如果不为空说明数组已经创建好，会给当前线程生成一个随机数，然后用随机数和数组长度取模计算他所在的格子，如果所在的格子为空调用fullAddCount方法，如果当前线程分配的格子不为空，则尝试cas修改该格子的value值+1,如果修改成功计算总共的元素个数，如果修改失败，说明竞争激烈需要调用fullAddCount方法进行元素个数的统计。
+2. 如果数组为空，说明还未创建，很有可能此时的竞争不是很激烈，直接通过cas操作baseCount进行元素个数的统计，如果cas操作成功，就要进行扩容的逻辑判断
+3. 如果数组为空，但是cas操作失败，则需要考虑给当前线程分配一个格子（指CounterCell对象），执行fullAddCount方法。
+4. fullAdCount方法后面分析，先把该方法中的后续扩容操作进行解析，首先扩容的条件是元素个数达到扩容阈值，且tab不为空，且tab数组长度小于最大容量则进入循环进行扩容，并且会把类中的sezeCtl变量赋值给局部变量sc。生成一个扩容标识为rs，rs = resizeStamp(n)
+```java
+sizeCtl ：默认为0，用来控制table的初始化和扩容操作
+-1 代表table正在初始化
+-N N对应的二进制的低16位数值为M，此时有M-1个线程进行扩容。
+其余情况：
+1、如果table未初始化，表示table需要初始化的大小。
+2、如果table初始化完成，表示table的容量，默认是table大小的0.75倍
+```
+5. 如果sc<0说明正在扩容，sc的高16位是数据校验标识，低16位代表当前有几个线程正在帮助扩容，如果扩容已经完成即，sc=rs+1 或者sc==rs+MAX_RESIZERS 表示帮助线程线程已经达到最大值了，或者需要扩容的新数组还未创建完成或者transferIndex这个参数小于等于0，表示所有的transfer任务都被领取完了，没有剩余的hash桶来给自己自己好这个线程来做transfer，说明已经不需要其它线程帮助扩容了，但是并不说明已经扩容完成，因为有可能还有线程正在迁移元素。满足以上任何一个条件直接跳出循环。如果以上条件都不满足会调用cas操作让当前线程进行协助扩容，sc值加一，代表扩容的线程数加1，如果成功调用transfer方法进行扩容。
+6. 如果sc>=0，说明当前还没有在进行扩容操作，因此第一次扩容之前肯定走这个分支，用于初始化新表 nextTable，会对sc进行cas运算 sc = rs<<16 + 2 ,即第一次扩容时会有一个+2的操作，那么扩容是否结束也是使用-2进行判断，后续在进行协助扩容的线程都是+1
+7. 最后计算元素总和。整个addCount方法结束。
+
+以上在addCount方法中有几个核心的方法 fullAddCount， sumCount， transfer，接着对这几个方法进行分析。
+
+### suncount方法
+- 流程步骤总结
+该方法比较简单，这里就叙述整体的流程。  
+
+该方法的目的就是计算元素总数，以baseCount这个值作为累加基准，遍历 counterCells 数组，得到每个对象中的value值，进行累加操作得到总和。
+可能得到的总数不是准确的，考虑性能的问题，只保证最终一致性，因为该方法没有加任何锁的操作。
 
 ### FullAddCount()方法
 ```java
@@ -398,3 +427,250 @@ private final void fullAddCount(long x, boolean wasUncontended) {
 }
 
 ```
+- 流程步骤总结
+
+1. 先介绍该方法中的核心参数
+```java
+ //用来表示比 contend（竞争）更严重的碰撞，若为true，表示可能需要扩容，以减少碰撞冲突
+ boolean collide  
+
+//标记着是否有线程竞争，在addcount方法中传过来的可能是true 也可能是false
+ boolean wasUncontended
+
+//cellsBusy 参数非常有意思，是一个volatile的 int值，用来表示自旋锁的标志，可以类比 AQS 中的 state 参数，用来控制锁之间的竞争，并且是独占模式。简化版的AQS。cellsBusy 若为0，说明无锁，线程都可以抢锁，若为1，表示已经有线程拿到了锁，则其它线程不能抢锁。
+ cellsBusy
+```
+
+上边的 addCount 方法还没完，如果元素个数没有统计成功，就走到 fullAddCount 这个方法了。  
+1.如果countcells数组不为空，分为多种情况  
+	a.如果当前线程生成的随机数所在的格子等于空，判断锁的状态，如果cellsBusy是0代表无锁，创建一个counterCell对象，把cellbusy通过cas操作修改为1，如果修改成功，再次检测数组是否为空且当前所在的格子是否为空，如果不为空，把创建的countcelss放入到当前格子，释放锁，created状态置为true，跳出循环。  
+	b.如果当前线程生成的随机数所在的格子不为空：  
+		(1)在addcount方法中通过cas操作设置失败，并把 wasUncontended 设置为true ，认为下一次不会产生竞争，对当前线程重新生成一个随机数，进入下次循环  
+		(2)如果 wasUncontended为true，直接尝试使用cas对改格子操作，如果cas成功则跳出循环  
+		(3)如果（2）中的cas操作失败，先判断数组是否有变化，如果有变化，或者数组长度已经超过当前cpu核心数把collide 置为 false  
+		(4)如果数组没有变化且数组长度小于cpu核心数且 collide 为 false，就把它改为 true，说明下次循环可能需要扩容  
+		(5)若数组无变化，且数组长度小于CPU核心数时，且 collide 为 true，说明冲突比较严重，需要扩容了。通过cas操作吧cellBusy设置为1，如果设置成功，会创建一个原来两倍的数组		    并进行数据的转移，转以结束后cellBusy设置为0并且collide = false;跳出循环。  
+
+2.如果countcells数据为空，这里会有一个cellsBusy 参数，是一个volatile的 int值，用来表示自旋锁的标志，可以类比 AQS 中的 state 参数，用来控制锁之间的竞争，并且是独占模式。简化版的AQS。cellsBusy 若为0，说明无锁，线程都可以抢锁，若为1，表示已经有线程拿到了锁，则其它线程不能抢锁。如果此时cellsBusy为零，那么通过cas操作修改为1，如果修改成功，再次检测counterCells数组是否有变化，如果没有变化就初始化一个长度为2的数组，根据当前线程的随机数值，计算下标，只有两个结果 0 或 1，并初始化对象，初始化成功后释放锁，并且把init设置为初始化成功的标志，用于跳出循环。  
+3.如果cellsBusy为1或者cas操作修改cellBusy失败，说明此时的数组还是为空，那么就直接通过cas操作修改baseCount的值，如果修改成功跳出循环。否则继续按条件执行1 2 3 的步骤。  
+
+### transfer()方法
+需要说明的一点是，虽然我们一直在说帮助扩容，其实更准确的说应该是帮助迁移元素。因为扩容的第一次初始化新表（扩容后的新表）这个动作，只能由一个线程完成。其他线程都是在帮助迁移元素到新数组。  
+```java
+A   A    A    A    B    B     A    A
+0   1    2    3    4    5     6    7
+```
+为了方便，上边以原数组长度 8 为例。在元素迁移的时候，所有线程都遵循从后向前推进的规则，即如图A线程是第一个进来的线程，会从下标为7的位置，开始迁移数据。
+而且当前线程迁移时会确定一个范围，限定它此次迁移的数据范围，如图 A 线程只能迁移 bound=6到 i=7 这两个数据。
+此时，其它线程就不能迁移这部分数据了，只能继续向前推进，寻找其它可以迁移的数据范围，且每次推进的步长为固定值 stride（此处假设为2）。如图中 B线程发现 A 线程正在迁移6,7的数据，因此只能向前寻找，然后迁移 bound=4 到 i=5 的这两个数据。  
+当每个线程迁移完成它的范围内数据时，都会继续向前推进。那什么时候是个头呢？  
+这就需要维护一个全局的变量 transferIndex，来表示所有线程总共推进到的元素下标位置。如图，线程 A 第一次迁移成功后又向前推进，然后迁移2,3 的数据。此时，若没有其他线程在帮助迁移，则 transferIndex 即为2。  
+剩余部分等待下一个线程来迁移，或者有任何的 A 和B线程已经迁移完成，也可以推进到这里帮助迁移。直到 transferIndex=0 。（会做一些其他校验来判断是否迁移全部完成，看代码）。  
+
+```java
+private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
+ int n = tab.length, stride;
+ //根据当前CPU核心数，确定每次推进的步长，最小值为16.（为了方便我们以2为例）
+ if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
+  stride = MIN_TRANSFER_STRIDE; // subdivide range
+ //从 addCount 方法，只会有一个线程跳转到这里，初始化新数组
+ if (nextTab == null) {            // initiating
+  try {
+   @SuppressWarnings("unchecked")
+   //新数组长度为原数组的两倍
+   Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];
+   nextTab = nt;
+  } catch (Throwable ex) {      // try to cope with OOME
+   sizeCtl = Integer.MAX_VALUE;
+   return;
+  }
+  //用 nextTable 指代新数组
+  nextTable = nextTab;
+  //这里就把推进的下标值初始化为原数组长度（以16为例）
+  transferIndex = n;
+ }
+ //新数组长度
+ int nextn = nextTab.length;
+ //创建一个标志类
+ ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
+ //是否向前推进的标志
+ boolean advance = true;
+ //是否所有线程都全部迁移完成的标志
+ boolean finishing = false; // to ensure sweep before committing nextTab
+ //i 代表当前线程正在迁移的桶的下标，bound代表它本次可以迁移的范围下限
+ for (int i = 0, bound = 0;;) {
+  Node<K,V> f; int fh;
+  //需要向前推进
+  while (advance) {
+   int nextIndex, nextBound;
+   //(1) 先看 (3) 。i每次自减 1，直到 bound。若超过bound范围，或者finishing标志为true，则不用向前推进。
+   //若未全部完成迁移，且 i 并未走到 bound，则跳转到 (7)，处理当前桶的元素迁移。
+   if (--i >= bound || finishing)
+    advance = false;
+   //(2) 每次执行，都会把 transferIndex 最新的值同步给 nextIndex
+   //若 transferIndex小于等于0，则说明原数组中的每个桶位置，都有线程在处理迁移了，
+   //于是，需要跳出while循环，并把 i设为 -1，以跳转到④判断在处理的线程是否已经全部完成。
+   else if ((nextIndex = transferIndex) <= 0) {
+    i = -1;
+    advance = false;
+   }
+   //(3) 第一个线程会先走到这里，确定它的数据迁移范围。(2)处会更新 nextIndex为 transferIndex 的最新值
+   //因此第一次 nextIndex=n=16，nextBound代表当次迁移的数据范围下限，减去步长即可，
+   //所以，第一次时，nextIndex=16，nextBound=16-2=14。后续，每次都会间隔一个步长。
+   else if (U.compareAndSwapInt
+      (this, TRANSFERINDEX, nextIndex,
+       nextBound = (nextIndex > stride ?
+           nextIndex - stride : 0))) {
+    //bound代表当次数据迁移下限
+    bound = nextBound;
+    //第一次的i为15，因为长度16的数组，最后一个元素的下标为15
+    i = nextIndex - 1;
+    //表明不需要向前推进，只有当把当前范围内的数据全部迁移完成后，才可以向前推进
+    advance = false;
+   }
+  }
+  //(4)
+  if (i < 0 || i >= n || i + n >= nextn) {
+   int sc;
+   //若全部线程迁移完成
+   if (finishing) {
+    nextTable = null;
+    //更新table为新表
+    table = nextTab;
+    //扩容阈值改为原来数组长度的 3/2 ，即新长度的 3/4，也就是新数组长度的0.75倍
+    sizeCtl = (n << 1) - (n >>> 1);
+    return;
+   }
+   //到这，说明当前线程已经完成了自己的所有迁移（无论参与了几次迁移），
+   //则把 sc 减1，表明参与扩容的线程数减少 1。
+   if (U.compareAndSwapInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
+    //在 addCount 方法最后，我们强调，迁移开始时，会设置 sc=(rs << RESIZE_STAMP_SHIFT) + 2
+    //每当有一个线程参与迁移，sc 就会加 1，每当有一个线程完成迁移，sc 就会减 1。
+    //因此，这里就是去校验当前 sc 是否和初始值是否相等。相等，则说明全部线程迁移完成。
+    if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
+     return;
+    //只有此处，才会把finishing 设置为true。
+    finishing = advance = true;
+    //这里非常有意思，会把 i 从 -1 修改为16，
+    //目的就是，让 i 再从后向前扫描一遍数组，检查是否所有的桶都已被迁移完成，参看 (6)
+    i = n; // recheck before commit
+   }
+  }
+  //(5) 若i的位置元素为空，则说明当前桶的元素已经被迁移完成，就把头结点设置为fwd标志。
+  else if ((f = tabAt(tab, i)) == null)
+   advance = casTabAt(tab, i, null, fwd);
+  //(6) 若当前桶的头结点是 ForwardingNode ，说明迁移完成，则向前推进 
+  else if ((fh = f.hash) == MOVED)
+   advance = true; // already processed
+  //(7) 处理当前桶的数据迁移。
+  else {
+   synchronized (f) {  //给头结点加锁
+    if (tabAt(tab, i) == f) {
+     Node<K,V> ln, hn;
+     //若hash值大于等于0，则说明是普通链表节点
+     if (fh >= 0) {
+      int runBit = fh & n;
+      //这里是 1.7 的 CHM 的 rehash 方法和 1.8 HashMap的 resize 方法的结合体。
+      //会分成两条链表，一条链表和原来的下标相同，另一条链表是原来的下标加数组长度的位置
+      //然后找到 lastRun 节点，从它到尾结点整体迁移。
+      //lastRun前边的节点则单个迁移，但是需要注意的是，这里是头插法。
+      //另外还有一点和1.7不同，1.7 lastRun前边的节点是复制过去的，而这里是直接迁移的，没有复制操作。
+      //所以，最后会有两条链表，一条链表从 lastRun到尾结点是正序的，而lastRun之前的元素是倒序的，
+      //另外一条链表，从头结点开始就是倒叙的。看下图。
+      Node<K,V> lastRun = f;
+      for (Node<K,V> p = f.next; p != null; p = p.next) {
+       int b = p.hash & n;
+       if (b != runBit) {
+        runBit = b;
+        lastRun = p;
+       }
+      }
+      if (runBit == 0) {
+       ln = lastRun;
+       hn = null;
+      }
+      else {
+       hn = lastRun;
+       ln = null;
+      }
+      for (Node<K,V> p = f; p != lastRun; p = p.next) {
+       int ph = p.hash; K pk = p.key; V pv = p.val;
+       if ((ph & n) == 0)
+        ln = new Node<K,V>(ph, pk, pv, ln);
+       else
+        hn = new Node<K,V>(ph, pk, pv, hn);
+      }
+      setTabAt(nextTab, i, ln);
+      setTabAt(nextTab, i + n, hn);
+      setTabAt(tab, i, fwd);
+      advance = true;
+     }
+     //树节点
+     else if (f instanceof TreeBin) {
+      TreeBin<K,V> t = (TreeBin<K,V>)f;
+      TreeNode<K,V> lo = null, loTail = null;
+      TreeNode<K,V> hi = null, hiTail = null;
+      int lc = 0, hc = 0;
+      for (Node<K,V> e = t.first; e != null; e = e.next) {
+       int h = e.hash;
+       TreeNode<K,V> p = new TreeNode<K,V>
+        (h, e.key, e.val, null, null);
+       if ((h & n) == 0) {
+        if ((p.prev = loTail) == null)
+         lo = p;
+        else
+         loTail.next = p;
+        loTail = p;
+        ++lc;
+       }
+       else {
+        if ((p.prev = hiTail) == null)
+         hi = p;
+        else
+         hiTail.next = p;
+        hiTail = p;
+        ++hc;
+       }
+      }
+      ln = (lc <= UNTREEIFY_THRESHOLD) ? untreeify(lo) :
+       (hc != 0) ? new TreeBin<K,V>(lo) : t;
+      hn = (hc <= UNTREEIFY_THRESHOLD) ? untreeify(hi) :
+       (lc != 0) ? new TreeBin<K,V>(hi) : t;
+      setTabAt(nextTab, i, ln);
+      setTabAt(nextTab, i + n, hn);
+      setTabAt(tab, i, fwd);
+      advance = true;
+     }
+    }
+   }
+  }
+ }
+}
+```
+- 流程步骤总结
+###### **重要的思想：**  
+1. ForwardingNode节点，这个类是一个标志，用来代表当前桶（数组中的某个下标位置）的元素已经全部迁移完成
+2. 高低位迁移
+3. 协助扩容，每个线程分配一定的区域进行扩容，默认大小是16
+4. boolean advance = true; 是否向前推进的标志，当前线程是否已经处理完自己的区域
+5. boolean finishing = false;  是否所有线程都全部迁移完成的标志
+
+###### 流程总结
+1. 通过计算 CPU 核心数和 Map 数组的长度得到每个线程（CPU）要帮助处理多少个桶，并且这里每个线程处理都是平均的。默认每个线程处理 16 个桶。因此，如果长度是 16 的时候，扩容的时候只会有一个线程扩容。
+2. 初始化临时变量 nextTable。将其在原有基础上扩容两倍。
+3. 通过CAS操作开始转移。根据一个 finishing 变量来判断，该变量为 true 表示扩容结束，否则继续扩容。  
+3.1 进入一个 while 循环，分配数组中一个桶的区间给线程，默认是 16. 从大到小进行分配。当拿到分配值后，进行 i-- 递减。这个 i 就是数组下标。（其中有一个 bound 参数，这个参数指的是该线程此次可以处理的区间的最小下标，超过这个下标，就需要重新领取区间或者结束扩容，还有一个 advance 参数，该参数指的是是否继续递减转移下一个桶，如果为 true，表示可以继续向后推进，反之，说明还没有处理好当前桶，不能推进)。总体来说while循环中做了三件事情：  
+（1） 确认当前线程扩容的范围  
+（2）是否所有的任务都已经分配出去，所有线程都有了自己的扩容区间  
+（3）--i操作，处理当前线程范围内的元素  
+3.2 出 while 循环，进 if 判断，判断扩容是否结束，如果扩容结束，清空临时变量，更新 table 变量，更新扩容阈值。如果没完成，但是当前线程已经扩容结束，将 sizeCtl 减一，表示扩容的线程少一个了。如果减完这个数以后，sizeCtl 回归了初始状态（-2），表示没有线程再扩容了，该方法所有的线程扩容结束了。（这里主要是判断扩容任务是否结束，如果结束了就让线程退出该方法，并更新相关变量）。然后检查所有的桶，防止遗漏。  
+3.3 若i的位置元素为空，则说明当前桶的元素已经被迁移完成，就把头结点设置为fwd标志。  
+3.4 如果 i 对应的槽位不是空，且有了占位符，那么该线程跳过这个槽位，处理下一个槽位。  
+3.5 如果以上都是不是，说明这个槽位有一个实际的值。开始同步处理这个桶。  
+3.6 到这里，都还没有对桶内数据进行转移，只是计算了下标和处理区间，然后一些完成状态判断。同时，如果对应下标内没有数据或已经被占位了，就跳过了。  
+4. 处理每个桶的行为都是同步的。防止 putVal 的时候向链表插入数据。  
+4.1 如果这个桶是链表，那么就将这个链表根据 length 取于拆成两份，取于结果是 0 的放在新表的低位，取于结果是 1 放在新表的高位。  
+4.2 如果这个桶是红黑数，那么也拆成 2 份，方式和链表的方式一样，然后，判断拆分过的树的节点数量，如果数量小于等于 6，改造成链表。反之，继续使用红黑树结构。  
+4.3 到这里，就完成了一个桶从旧表转移到新表的过程。  
+
+
