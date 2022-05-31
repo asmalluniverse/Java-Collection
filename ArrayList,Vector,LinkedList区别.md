@@ -1,11 +1,11 @@
 ### 1.ArrayList vs Vector
 Vector与ArrayList一样，是通过数组实现的,数组最大的特点就是随机访问，但是缺点也很明显，如果数组中的元素不够需要进行扩容，
-扩容的过程涉及数组的复制，效率比较低下
+扩容的过程涉及数组的复制，效率比较低下,ArrayList、Vector默认初始容量为10.
 
 关于ArrayList和Vector区别如下：
-　　1.ArrayList在内存不够时默认是扩展1.5倍，Vector是默认扩展1倍。
-　　2.Vector提供indexOf(obj, start)接口，ArrayList没有。
-　　3.Vector属于线程安全级别的，ArrayList是线程非安全的，因为Vector方法中使用的Synchronized关键字
+1. ArrayList在内存不够时默认是增长原来的1.5倍，Vector是增加原来的两倍。
+2. Vector提供indexOf(obj, start)接口，ArrayList没有。
+3. Vector属于线程安全级别的，ArrayList是线程非安全的，因为Vector方法中使用的Synchronized关键字
 
 ### 2.ArrayList vs LinkedList
 LinkedList是用链表结构存储数据的，很适合数据的动态插入和删除，随机访问和遍历速度比较慢。
@@ -16,8 +16,8 @@ LinkedList是用链表结构存储数据的，很适合数据的动态插入和�
 2. 如果都能完成，考虑哪种更高效。
 
 区别：
-1.在「改查」这两个功能上，因为数组能够随机访问，所以 ArrayList 的效率高。
-2.如果不考虑找到这个元素的时间，数组因为物理上的连续性，当要增删元素时，
+1. 在「改查」这两个功能上，因为数组能够随机访问，所以 ArrayList 的效率高。
+2. 如果不考虑找到这个元素的时间，数组因为物理上的连续性，当要增删元素时，
 在尾部还好，但是其他地方就会导致后续元素都要移动，所以效率较低；而链表则可以轻松的断开和下一个元素的连接，直接插入新元素或者移除旧元素。
 但是呢，实际上你不能不考虑找到元素的时间。而且如果是在尾部操作，数据量大时 ArrayList 会更快的。
 
